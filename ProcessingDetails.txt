@@ -1,0 +1,263 @@
+FRAME EXTRACTION FUNCTION
+
+What it does: Converts a video file into a fixed number of frames.
+
+Step-by-step:
+
+    Opens video file with OpenCV
+
+    Gets total frame count (e.g., 60 frames for 2-second video)
+
+    Calculates 8 evenly spaced indices (0, 8, 16, 24, 32, 40, 48, 56)
+
+    Jumps to each index and reads that specific frame
+
+    Resizes each frame from 1920×1080 → 64×64 (500x memory reduction)
+
+    Converts colors from BGR (OpenCV format) to RGB (PyTorch format)
+
+    Stacks all 8 frames into one array
+
+Output shape: [8, 64, 64, 3] - 8 frames, 64×64 pixels, 3 color channels
+
+Error handling: If a frame fails to read, duplicates the last good frame. If no frames exist, creates black frames.
+3. AUTSL PREPROCESSING (Turkish Sign Language)
+
+Input data structure:
+
+    CSV files: train.csv, val.csv, test.csv
+
+    Each CSV has: video_name, class_id
+
+    Videos in folders: train/, val/, test/
+
+What the code does:
+
+    Reads CSV to get list of video names and labels
+
+    For each video, finds the file in the corresponding folder
+
+    Calls frame extraction to get [8, 64, 64, 3] array
+
+    Stores frames, labels, and video names in a dictionary
+
+    Converts lists to NumPy arrays (uint8 to save memory)
+
+    Saves as .pkl file using pickle
+
+Output file: autsl_train.pkl (28,132 videos)
+
+Contents of .pkl file:
+
+    frames: [28132, 8, 64, 64, 3] - all video frames
+
+    labels: [28132] - class IDs for each video
+
+    video_names: list of original filenames
+
+4. WLASL PREPROCESSING (American Sign Language)
+
+How it's different from AUTSL:
+
+    Metadata is JSON, not CSV
+
+    All videos in one videos/ folder
+
+    Split info inside JSON, not folders
+
+Loading metadata:
+
+    Reads WLASL_v0.3.json file
+
+    Creates dictionaries mapping:
+
+        video_id → class label
+
+        video_id → split (train/val/test)
+
+        video_id → gloss (word like "book")
+
+    Loads missing.txt list of unavailable YouTube videos
+
+Processing videos:
+
+    Gets all video IDs for the requested split
+
+    Skips IDs in missing.txt
+
+    Looks for video file with multiple extensions (.mp4, .mkv, .avi, .mov)
+
+    Extracts frames (same 8 frames, 64×64)
+
+    Stores frames, labels, video_ids, and glosses
+
+Output file: wlasl_train.pkl (8,313 videos)
+
+Contents of .pkl file:
+
+    frames: [8313, 8, 64, 64, 3]
+
+    labels: [8313] - class IDs
+
+    video_ids: original YouTube IDs
+
+    glosses: words like "book", "drink", "computer"
+
+5. EMOSIGN PREPROCESSING (Sentiment Labels Only)
+
+What it is: Annotations only - no video files (require separate ASLLRP access)
+
+What the code does:
+
+    Reads emosign_dataset.csv
+
+    Extracts sentiment scores (-3 to +3 scale)
+
+    Extracts 10 emotion intensities (joy, excited, sadness, anger, etc.)
+
+    Stores reasoning text from annotators
+
+    Saves as .pkl file
+
+Why no video extraction: Videos are not available with this dataset. You use these labels with WLASL or AUTSL videos instead.
+
+Output file: emosign_labels.pkl (200 samples)
+
+Contents of .pkl file:
+
+    sentiment_scores: [200] - values -3 to +3
+
+    emotion_intensities: [200, 10] - intensity 1-4 for 10 emotions
+
+    video_names: original identifiers
+
+    reasoning_1/2/3: text explanations
+
+6. PYTORCH DATASET CLASSES
+AUTSLDataset
+
+What it does in __init__:
+
+    Loads .pkl file from disk
+
+    Converts frames to PyTorch tensor
+
+    Normalizes pixel values from 0-255 → 0-1
+
+    Reshapes from [N, T, H, W, C] → [N, T, C, H, W] (PyTorch format)
+
+What it does in __getitem__:
+
+    Returns frames and label for one video
+
+    Applies brightness augmentation if training
+
+Augmentation (training only):
+
+    Random brightness adjustment (0.8x to 1.2x)
+
+    No horizontal flip (would change sign meaning in ASL)
+
+WLASLDataset
+
+Same as AUTSLDataset with one addition:
+
+    Class balancing for training set
+
+    Rare classes are oversampled so model sees them equally
+
+How class balancing works:
+
+    Counts videos per class
+
+    Calculates weight = 1 / count (rare classes get high weight)
+
+    Sampler picks videos with probability proportional to weight
+
+EMOSIGNDataset
+
+What it does:
+
+    Loads labels only (no frames)
+
+    Normalizes sentiment: -3 to +3 → 0 to 1
+
+    Normalizes emotions: 1-4 → 0-1
+
+    Returns dummy frames for compatibility with training loops
+
+7. DATA LOADER CREATION
+
+Transforms applied:
+
+    Normalization using ImageNet statistics (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+
+    This standardizes pixel values for pre-trained models
+
+DataLoader configuration:
+
+    batch_size=16 - Process 16 videos at once
+
+    shuffle=True (training only) - Random order each epoch
+
+    num_workers=4 - Use 4 CPU processes to load data in parallel
+
+    pin_memory=True - Faster CPU→GPU transfer
+
+What the loaders dictionary contains:
+python
+
+loaders = {
+    'autsl': {'train': loader, 'val': loader, 'test': loader},
+    'wlasl': {'train': loader, 'val': loader, 'test': loader},
+    'emosign': loader
+}
+
+
+RAW DATA (on disk)
+    │
+    ▼
+FRAME EXTRACTION
+    • Opens video with OpenCV
+    • Samples 8 evenly spaced frames
+    • Resizes to 64×64 pixels
+    • Converts BGR → RGB
+    • Output: [8, 64, 64, 3] array
+    │
+    ▼
+AUTSL PROCESSING
+    • Reads train.csv, val.csv, test.csv
+    • Matches CSV names to video files
+    • Extracts frames for 28,142 + 4,418 + 3,741 videos
+    • Saves to autsl_train/val/test.pkl
+    │
+    ▼
+WLASL PROCESSING
+    • Loads WLASL_v0.3.json metadata
+    • Creates video_id → label/split mapping
+    • Filters missing.txt videos
+    • Extracts frames for 8,313 + 2,253 + 1,414 videos
+    • Saves to wlasl_train/val/test.pkl
+    │
+    ▼
+EMOSIGN PROCESSING
+    • Reads emosign_dataset.csv
+    • Extracts sentiment scores (-3 to +3)
+    • Extracts 10 emotion intensities (1-4)
+    • Saves to emosign_labels.pkl
+    │
+    ▼
+PYTORCH DATASETS
+    • Load .pkl files
+    • Normalize pixel values (/255)
+    • Reshape to [T, C, H, W]
+    • Apply augmentation (training only)
+    │
+    ▼
+DATALOADERS
+    • Batch size: 16
+    • Parallel loading: 4 workers
+    • Class balancing for WLASL
+    │
+    ▼
+READY FOR MODEL TRAINING
